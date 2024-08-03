@@ -1,4 +1,4 @@
-//{{NO_DEPENDENCIES}}
+﻿//{{NO_DEPENDENCIES}}
 // Microsoft Visual C++ generated include file.
 // Used by SKTimeStamp.rc
 //
@@ -14,14 +14,20 @@
 #define IDC_DATEACCESSED                1006
 #define IDC_TIMEACCESSED                1007
 #define IDC_FILEINFO                    1008
+#define IDC_DATEMEDIACREATED            1009
+#define IDC_TIMEMEDIACREATED            1010
+#define IDC_BUTTONMEDIACREATED          1011
+#define IDC_BUTTONACCESSED              1012
+#define IDC_BUTTONMODIFIED              1013
+#define IDC_BUTTONCREATED               1014
 
 // Next default values for new objects
-//
+// 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        102
 #define _APS_NEXT_COMMAND_VALUE         40001
-#define _APS_NEXT_CONTROL_VALUE         1009
+#define _APS_NEXT_CONTROL_VALUE         1012
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

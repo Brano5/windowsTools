@@ -292,6 +292,7 @@
     <ClInclude Include="ShellExtClassFactory.h" />
     <ClInclude Include="ShellPropertyPage.h" />
     <ClInclude Include="stdafx.h" />
+    <ClInclude Include="version.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="SKTimeStamp.rc" />

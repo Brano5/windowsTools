@@ -24,12 +24,19 @@
 
 #include "resource.h"
 
+#include <wincodec.h>
+
+#include <string>
+#include <vector>
+#include <algorithm>
+
 // Nonmember function prototypes
 BOOL CALLBACK PageProc(HWND, UINT, WPARAM, LPARAM);
 UINT CALLBACK PropPageCallbackProc(HWND hwnd, UINT uMsg, LPPROPSHEETPAGE ppsp);
 // Misc utility functions.
 void          readDtpCtrl(HWND hwnd, UINT idcDatePicker, UINT idcTimePicker, FILETIME* pFiletime);
 void          setDtpCtrl(HWND hwnd, UINT idcDatePicker, UINT idcTimePicker, const FILETIME* pFiletime);
+bool          GetMediaCreationDate(const std::wstring& filePath, FILETIME& creationTime);
 
 // CShellExt member functions (needed for IShellPropSheetExt)
 STDMETHODIMP  CShellExt::AddPages(LPFNADDPROPSHEETPAGE lpfnAddPage,
@@ -143,13 +150,14 @@ BOOL CShellPropertyPage::PageProc(HWND /*hwnd*/, UINT uMessage, WPARAM wParam, L
             {
                 case PSN_APPLY:
                 {
-                    FILETIME ftLastWriteTime, ftLastAccessTime, ftCreationTime;
+                    FILETIME ftLastWriteTime, ftLastAccessTime, ftCreationTime, ftMediaCreatedTime;
                     // Retrieve the dates/times from the DTP controls.
                     readDtpCtrl(m_hwnd, IDC_DATECREATED, IDC_TIMECREATED, &ftCreationTime);
                     readDtpCtrl(m_hwnd, IDC_DATEMODIFIED, IDC_TIMEMODIFIED, &ftLastWriteTime);
                     readDtpCtrl(m_hwnd, IDC_DATEACCESSED, IDC_TIMEACCESSED, &ftLastAccessTime);
+                    readDtpCtrl(m_hwnd, IDC_DATEMEDIACREATED, IDC_TIMEMEDIACREATED, &ftMediaCreatedTime);
 
-                    SetDates(ftCreationTime, ftLastWriteTime, ftLastAccessTime);
+                    SetDates(ftCreationTime, ftLastWriteTime, ftLastAccessTime, ftMediaCreatedTime);
 
                     // Return PSNRET_NOERROR to allow the sheet to close if the user clicked OK.
                     SetWindowLongPtr(m_hwnd, DWLP_MSGRESULT, PSNRET_NOERROR);
@@ -189,8 +197,23 @@ BOOL CShellPropertyPage::PageProc(HWND /*hwnd*/, UINT uMessage, WPARAM wParam, L
                         GetSystemTime(&st);
                         SystemTimeToFileTime(&st, &ftLocal);
                         // 'touch' means to set the last modification time to the current time
-                        SetDates(ftNull, ftLocal, ftNull);
+                        SetDates(ftNull, ftLocal, ftNull, ftNull);
                         InitWorkfileView(); // update the controls
+                        return TRUE;
+                    }
+                    else if (LOWORD(wParam) == IDC_BUTTONCREATED)
+                    {
+                        CopyDateTime(IDC_DATECREATED, IDC_TIMECREATED, IDC_DATEMODIFIED, IDC_TIMEMODIFIED, IDC_DATEACCESSED, IDC_TIMEACCESSED);
+                        return TRUE;
+                    }
+                    else if (LOWORD(wParam) == IDC_BUTTONMODIFIED)
+                    {
+                        CopyDateTime(IDC_DATEMODIFIED, IDC_TIMEMODIFIED, IDC_DATECREATED, IDC_TIMECREATED, IDC_DATEACCESSED, IDC_TIMEACCESSED);
+                        return TRUE;
+                    }
+                    else if (LOWORD(wParam) == IDC_BUTTONACCESSED)
+                    {
+                        CopyDateTime(IDC_DATEACCESSED, IDC_TIMEACCESSED, IDC_DATECREATED, IDC_TIMECREATED, IDC_DATEMODIFIED, IDC_TIMEMODIFIED);
                         return TRUE;
                     }
                     break;
@@ -199,12 +222,42 @@ BOOL CShellPropertyPage::PageProc(HWND /*hwnd*/, UINT uMessage, WPARAM wParam, L
     return FALSE;
 }
 
+void CShellPropertyPage::CopyDateTime(UINT idcSourceDatePicker, UINT idcSourceTimePicker, UINT idcDestination1DatePicker, UINT idcDestination1TimePicker, UINT idcDestination2DatePicker, UINT idcDestination2TimePicker)
+{
+    FILETIME sourceFileTime;
+    readDtpCtrl(m_hwnd, idcSourceDatePicker, idcSourceTimePicker, &sourceFileTime);
+
+    // Set the retrieved date/time to the other fields
+    setDtpCtrl(m_hwnd, idcDestination1DatePicker, idcDestination1TimePicker, &sourceFileTime);
+    setDtpCtrl(m_hwnd, idcDestination2DatePicker, idcDestination2TimePicker, &sourceFileTime);
+}
+
 void CShellPropertyPage::InitWorkfileView()
 {
     WIN32_FILE_ATTRIBUTE_DATA fData          = {0};
     bool                      bValidCreate   = true;
     bool                      bValidWrite    = true;
     bool                      bValidAccessed = true;
+    FILETIME                  ftMediaCreatedTime = {0};
+    bool                      bValidMediaCreated = false;
+
+    bool                      isMediaFile        = false;
+    const std::wstring        mediaExtensions[]  = {L".jpg", L".jpeg", L".mp4", L".avi"};
+
+    for (const auto& fileName : fileNames)
+    {
+        std::wstring extension = PathFindExtension(fileName.c_str());
+        for (const auto& ext : mediaExtensions)
+        {
+            if (_wcsicmp(extension.c_str(), ext.c_str()) == 0)
+            {
+                isMediaFile = true;
+                break;
+            }
+        }
+        if (isMediaFile)
+            break;
+    }
 
     for (std::vector<std::wstring>::iterator it = fileNames.begin(); it != fileNames.end() && (bValidCreate || bValidWrite || bValidAccessed); ++it)
     {
@@ -213,34 +266,37 @@ void CShellPropertyPage::InitWorkfileView()
             bValidCreate   = false;
             bValidWrite    = false;
             bValidAccessed = false;
+            bValidMediaCreated = false;
         }
         else
-            break;
+        {
+            if (fData.ftCreationTime.dwLowDateTime == 0 && fData.ftCreationTime.dwHighDateTime == 0)
+                bValidCreate = false;
+            if (fData.ftLastWriteTime.dwLowDateTime == 0 && fData.ftLastWriteTime.dwHighDateTime == 0)
+                bValidWrite = false;
+            if (fData.ftLastAccessTime.dwLowDateTime == 0 && fData.ftLastAccessTime.dwHighDateTime == 0)
+                bValidAccessed = false;
+            if (isMediaFile && !GetMediaCreationDate(*it, ftMediaCreatedTime))
+                bValidMediaCreated = false;
+        }
     }
-    if (bValidCreate)
+
+    setDtpCtrl(m_hwnd, IDC_DATECREATED, IDC_TIMECREATED, bValidCreate ? &fData.ftCreationTime : nullptr);
+    setDtpCtrl(m_hwnd, IDC_DATEMODIFIED, IDC_TIMEMODIFIED, bValidWrite ? &fData.ftLastWriteTime : nullptr);
+    setDtpCtrl(m_hwnd, IDC_DATEACCESSED, IDC_TIMEACCESSED, bValidAccessed ? &fData.ftLastAccessTime : nullptr);
+
+    if (isMediaFile)
     {
-        setDtpCtrl(m_hwnd, IDC_DATECREATED, IDC_TIMECREATED, &fData.ftCreationTime);
+        setDtpCtrl(m_hwnd, IDC_DATEMEDIACREATED, IDC_TIMEMEDIACREATED, bValidMediaCreated ? &ftMediaCreatedTime : nullptr);
+        ShowWindow(GetDlgItem(m_hwnd, IDC_DATEMEDIACREATED), SW_SHOW);
+        ShowWindow(GetDlgItem(m_hwnd, IDC_TIMEMEDIACREATED), SW_SHOW);
     }
     else
     {
-        setDtpCtrl(m_hwnd, IDC_DATECREATED, IDC_TIMECREATED, nullptr);
+        ShowWindow(GetDlgItem(m_hwnd, IDC_DATEMEDIACREATED), SW_HIDE);
+        ShowWindow(GetDlgItem(m_hwnd, IDC_TIMEMEDIACREATED), SW_HIDE);
     }
-    if (bValidWrite)
-    {
-        setDtpCtrl(m_hwnd, IDC_DATEMODIFIED, IDC_TIMEMODIFIED, &fData.ftLastWriteTime);
-    }
-    else
-    {
-        setDtpCtrl(m_hwnd, IDC_DATEMODIFIED, IDC_TIMEMODIFIED, nullptr);
-    }
-    if (bValidAccessed)
-    {
-        setDtpCtrl(m_hwnd, IDC_DATEACCESSED, IDC_TIMEACCESSED, &fData.ftLastAccessTime);
-    }
-    else
-    {
-        setDtpCtrl(m_hwnd, IDC_DATEACCESSED, IDC_TIMEACCESSED, nullptr);
-    }
+
     if (fileNames.size() == 1)
     {
         // only one file/folder selected, show the full path
@@ -262,9 +318,9 @@ void CShellPropertyPage::InitWorkfileView()
     }
 }
 
-void CShellPropertyPage::SetDates(FILETIME ftCreationTime, FILETIME ftLastWriteTime, FILETIME ftLastAccessTime) const
+void CShellPropertyPage::SetDates(FILETIME ftCreationTime, FILETIME ftLastWriteTime, FILETIME ftLastAccessTime, FILETIME ftMediaCreatedTime) const
 {
-    FILETIME                  ftLastWriteTime2, ftLastAccessTime2, ftCreationTime2;
+    FILETIME                  ftLastWriteTime2, ftLastAccessTime2, ftCreationTime2, ftMediaCreatedTime2;
     std::vector<std::wstring> failedFiles;
     for (const auto& fileName : fileNames)
     {
@@ -273,11 +329,13 @@ void CShellPropertyPage::SetDates(FILETIME ftCreationTime, FILETIME ftLastWriteT
         {
             if ((ftCreationTime.dwHighDateTime == 0 && ftCreationTime.dwLowDateTime == 0) ||
                 (ftLastAccessTime.dwHighDateTime == 0 && ftLastAccessTime.dwLowDateTime == 0) ||
-                (ftLastWriteTime.dwHighDateTime == 0 && ftLastWriteTime.dwLowDateTime == 0))
+                (ftLastWriteTime.dwHighDateTime == 0 && ftLastWriteTime.dwLowDateTime == 0) ||
+                (ftMediaCreatedTime.dwHighDateTime == 0 && ftMediaCreatedTime.dwLowDateTime == 0))
             {
                 ftCreationTime2               = ftCreationTime;
                 ftLastAccessTime2             = ftLastAccessTime;
                 ftLastWriteTime2              = ftLastWriteTime;
+                ftMediaCreatedTime2           = ftMediaCreatedTime;
                 BY_HANDLE_FILE_INFORMATION fi = {0};
                 if (GetFileInformationByHandle(hFile, &fi))
                 {
@@ -287,6 +345,8 @@ void CShellPropertyPage::SetDates(FILETIME ftCreationTime, FILETIME ftLastWriteT
                         ftLastAccessTime2 = fi.ftLastAccessTime;
                     if (ftLastWriteTime.dwHighDateTime == 0 && ftLastWriteTime.dwLowDateTime == 0)
                         ftLastWriteTime2 = fi.ftLastWriteTime;
+                    if (ftMediaCreatedTime.dwHighDateTime == 0 && ftMediaCreatedTime.dwLowDateTime == 0)
+                        GetMediaCreationDate(fileName, ftMediaCreatedTime2);
                     if (SetFileTime(hFile, &ftCreationTime2, &ftLastAccessTime2, &ftLastWriteTime2) == FALSE)
                         failedFiles.push_back(fileName);
                 }
@@ -371,4 +431,92 @@ void setDtpCtrl(HWND hwnd, UINT idcDatePicker, UINT idcTimePicker, const FILETIM
     SendDlgItemMessage(hwnd, idcDatePicker, DTM_SETSYSTEMTIME, flag, reinterpret_cast<LPARAM>(&st));
     SendDlgItemMessage(hwnd, idcTimePicker, DTM_SETSYSTEMTIME, 0, reinterpret_cast<LPARAM>(&st));
     SendDlgItemMessage(hwnd, idcTimePicker, WM_ENABLE, flag == GDT_VALID, 0);
+}
+
+// Check if the file extension is a media file
+bool IsMediaFile(const std::wstring& filePath)
+{
+    std::wstring extensions[] = {L".jpg", L".jpeg", L".mp4", L".avi"};
+    std::wstring extension    = filePath.substr(filePath.find_last_of(L'.'));
+    std::transform(extension.begin(), extension.end(), extension.begin(), ::towlower);
+    return std::find(std::begin(extensions), std::end(extensions), extension) != std::end(extensions);
+}
+
+// Get image creation date
+bool GetImageCreationDate(const std::wstring& filePath, FILETIME& creationTime)
+{
+    IWICImagingFactory*      pFactory     = nullptr;
+    IWICBitmapDecoder*       pDecoder     = nullptr;
+    IWICMetadataQueryReader* pQueryReader = nullptr;
+    bool                     result       = false;
+
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFactory));
+    if (SUCCEEDED(hr))
+    {
+        hr = pFactory->CreateDecoderFromFilename(filePath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &pDecoder);
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pDecoder->GetMetadataQueryReader(&pQueryReader);
+    }
+
+    PROPVARIANT propValue;
+    PropVariantInit(&propValue);
+
+    if (SUCCEEDED(hr))
+    {
+        hr = pQueryReader->GetMetadataByName(L"/app1/ifd/exif/{ushort=36867}", &propValue);
+    }
+
+    if (SUCCEEDED(hr) && propValue.vt == VT_LPWSTR)
+    {
+        SYSTEMTIME sysTime = {0};
+        swscanf_s(propValue.pwszVal, L"%4hd:%2hd:%2hd %2hd:%2hd:%2hd", &sysTime.wYear, &sysTime.wMonth, &sysTime.wDay, &sysTime.wHour, &sysTime.wMinute, &sysTime.wSecond);
+        SystemTimeToFileTime(&sysTime, &creationTime);
+        result = true;
+    }
+
+    PropVariantClear(&propValue);
+
+    if (pQueryReader)
+        pQueryReader->Release();
+    if (pDecoder)
+        pDecoder->Release();
+    if (pFactory)
+        pFactory->Release();
+
+    CoUninitialize();
+
+    return result;
+}
+
+// Placeholder for video creation date extraction
+bool GetVideoCreationDate(const std::wstring& filePath, FILETIME& creationTime)
+{
+    // Implementation using FFmpeg or Media Foundation
+    return false; // Implement this
+}
+
+// Get media creation date based on file type
+bool GetMediaCreationDate(const std::wstring& filePath, FILETIME& creationTime)
+{
+    if (!IsMediaFile(filePath))
+        return false;
+
+    std::wstring extension = filePath.substr(filePath.find_last_of(L'.'));
+    std::transform(extension.begin(), extension.end(), extension.begin(), ::towlower);
+
+    if (extension == L".jpg" || extension == L".jpeg")
+    {
+        return GetImageCreationDate(filePath, creationTime);
+    }
+    else if (extension == L".mp4" || extension == L".avi")
+    {
+        return GetVideoCreationDate(filePath, creationTime);
+    }
+
+    return false;
 }

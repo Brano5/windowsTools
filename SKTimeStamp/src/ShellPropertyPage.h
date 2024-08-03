@@ -42,6 +42,8 @@ public:
      */
     virtual BOOL PageProc(HWND hwnd, UINT uMessage, WPARAM wParam, LPARAM lParam);
 
+    void         CopyDateTime(UINT idcSourceDatePicker, UINT idcSourceTimePicker, UINT idcDestination1DatePicker, UINT idcDestination1TimePicker, UINT idcDestination2DatePicker, UINT idcDestination2TimePicker);
+
 protected:
     /**
      * Initializes the property page.
@@ -51,7 +53,7 @@ protected:
      * Sets the dates on the selected files and folders.
      * If a filetime is zero, the original date of the file/folder is used, i.e., the filedate is not changed.
      */
-    void                      SetDates(FILETIME ftCreationTime, FILETIME ftLastWriteTime, FILETIME ftLastAccessTime) const;
+    void                      SetDates(FILETIME ftCreationTime, FILETIME ftLastWriteTime, FILETIME ftLastAccessTime, FILETIME ftMediaCreatedTime) const;
 
     HWND                      m_hwnd;
     std::vector<std::wstring> fileNames;

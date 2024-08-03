@@ -27,3 +27,6 @@
 #include <ShellApi.h>
 #include <Shlobj.h>
 #include <Shlwapi.h>
+
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
